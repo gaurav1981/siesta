@@ -33,7 +33,7 @@ In Swift, everything is namespaced to the framework (`Service` is shorthand for 
  * `BOSError`
  * `BOSResourceObserver`
 
-Siesta structs are exposed as Objective-C classes. This incurs a _very_ slight performance overhead, which will not be a problem 99.9% of the time — but if for some reason you need to iterate over a massive number of resources and examine their `latestData`, it _might_ be better to write that bit of code in Swift. Benchmark it and find out.
+Siesta structs are exposed as Objective-C classes, and some Swift classes get wrapped in Obj-C friendly compatibility objects. This may incur a slight performance overhead, which will not be a problem 99.9% of the time — but if for some reason you need to iterate over a massive number of resources and examine their `latestData`, it _might_ be better to write that bit of code in Swift. Benchmark it and find out.
 
 ## Setting Up Services
 
@@ -43,7 +43,7 @@ Objective-C can’t see Swift globals, so you’ll instead need to make your sin
 
 ```swift
 class MyAPI: Service {
-    public static let instance = MyAPI(base: "https://api.example.com")
+    public static let instance = MyAPI(baseURL: "https://api.example.com")
 }
 ```
 
@@ -55,56 +55,58 @@ You can then do:
 
 ## Observers
 
-Objective-C cannot see Swift enums, and `ResourceEvent` and `RequestMethod` are both enums. Objective-C methods that deal with events take strings instead. In the case of `ResourceEvent.NewData`, the string you receive also contains the nested source of the data in parentheses, e.g. `NewData(Network)`. If you just want to check whether new data arrived and don’t care where it came from, look for the `NewData` prefix:
+Objective-C cannot see Swift enums, and `ResourceEvent` and `RequestMethod` are both enums. Objective-C methods that deal with events take strings instead, with the enum cases capitalized. In the case of `ResourceEvent.newData`, the string you receive also contains the nested source of the data in parentheses, e.g. `NewData(Network)`. If you just want to check whether new data arrived and don’t care where it came from, look for the `NewData` prefix:
 
 ```objc
--  (void) resourceChanged: (BOSResource*) resource event: (NSString*) event {
+- (void) resourceChanged: (BOSResource*) resource event: (NSString*) event {
   if([event hasPrefix:@"NewData"]) {
     ...
   }
 }
 ```
 
-## Request Methods
+## Runtime vs. Compile-Time Checks
 
 Some things that would be compile errors in Swift’s more robust static type system surface as runtime errors in Objective-C.
 
 Of particular note are the various flavors of `[Resource requestWithMethod:...]`, which take a string instead of an enum for the HTTP method. That means that what is a compile error in Swift:
 
 ```swift
-resource.request(.FLARGLE)
+resource.request(.flargle)
 ```
 
-…is a crash in Objective-C:
+…comes back as a failed request in Objective-C:
 
 ```objc
-[resource.requestWithMethod:@"FLARGLE"]
+[resource requestWithMethod:@"FLARGLE"]
 ```
+
+A similar principle applies for attempting to pass something other than a dictionary or an array for a JSON request body.
 
 ## Request Callbacks
 
 Most of the request callbacks translate naturally into Objective-C blocks, but the `completion` callback, which can receive either data on success or an error on failure:
 
 ```swift
-resource.request(.POST, json: ["color": "green"])
-    .completion { response in
-        switch response {
-            case .Success(let data):
-                ...
-            
-            case .Failure(let error):
-                ...
-        }
+resource.request(.post, json: ["color": "green"])
+  .onCompletion { info in
+    switch info.response {
+      case .success(let data):
+        …
+      
+      case .failure(let error):
+        …
     }
+  }
 ```
 
 …has a different, less type-safe flavor in Objective-C:
 
 ```objc
-[resource.requestWithMethod:@"POST" json:@{@"color": @"mauve"}]
-    .completion:(^(BOSEntity *data, BOSError *error) {
-        ...
-    });
+[[resource.requestWithMethod:@"POST" json:@{@"color": @"mauve"}]
+  onCompletion: ^(BOSEntity *data, BOSError *error) {
+    …
+  }];
 ```
 
 Exactly one of the completion block’s two arguments will be non-nil.

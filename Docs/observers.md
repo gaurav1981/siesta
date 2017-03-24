@@ -17,12 +17,12 @@ resource.addObserver(owner: self) {
 
 (Note that you’ll usually need `[weak self]` in the closure to prevent a memory leak.)
 
-Observers receive a notification whenever a resource’s state changes: when it starts loading, receives new data, or receives an error. Addditionally, each observer is also pinged immediately when it first starts observing, even if the resource has not changed. This lets you put all your update code in one place.
+Observers receive a notification whenever a resource’s state changes: when it starts loading, receives new data, or receives an error. Additionally, each observer is also pinged immediately when it first starts observing, even if the resource has not changed. This lets you put all your update code in one place.
 
 The simplest way to implement your observer is to ignore what kind of event triggered the notification, and take an idempotent “update everything” approach:
 
 ```swift
-func resourceChanged(resource: Resource, event: ResourceEvent) {
+func resourceChanged(_ resource: Resource, event: ResourceEvent) {
     // The convenience .jsonDict accessor returns empty dict if no
     // data, so the same code can both populate and clear fields.
     let json = resource.jsonDict
@@ -33,7 +33,7 @@ func resourceChanged(resource: Resource, event: ResourceEvent) {
 }
 ```
 
-Note the pleasantly reactive flavor this code takes on — without the overhead of adopting full-on Reactive programming with a captial R.
+Note the pleasantly reactive flavor this code takes on — without the overhead of adopting full-on Reactive programming with a capital R.
 
 (Aside: It would be the most natural thing in the world to wire a Siesta resource up to a reactive library. Pull requests welcome!)
 
@@ -44,8 +44,8 @@ If updating the whole UI is an expensive operation (but it rarely is; benchmark 
 For example, if you have an expensive update you want to perform only when `latestData` changes:
 
 ```swift
-func resourceChanged(resource: Resource, event: ResourceEvent) {
-    if case .NewData = event {
+func resourceChanged(_ resource: Resource, event: ResourceEvent) {
+    if case .newData = event {
         // Do expensive update
     }
 }
@@ -54,7 +54,7 @@ func resourceChanged(resource: Resource, event: ResourceEvent) {
 If your API supports the `ETag` header, you could also use the `Entity.etag` property:
 
 ```swift
-func resourceChanged(resource: Resource, event: ResourceEvent) {
+func resourceChanged(_ resource: Resource, event: ResourceEvent) {
     if displayedEtag != resource.latestData?.etag {
         displayedEtag = resource.latestData?.etag
         // Do expensive update
@@ -66,15 +66,15 @@ Use this technique judiciously. Lots of fine-grained logic like this is a bad co
 
 Here’s how the various `ResourceEvent` values map to `Resource` state changes:
 
-|                    | `observers`    | `latestData` | `latestError` | `loading` | `timestamp` |
-|:-------------------|:--------------:|:------------:|:-------------:|:---------:|:-----------:|
-| `ObserverAdded`    |  one added     |  –           |  –            |  –        |  –          |
-| `Requested`        |  –             |  –           |  –            | `true`    |  –          |
-| `RequestCancelled` |  –             |  –           |  –            | `false`*  |  –          |
-| `NewData`          |  –             |  updated     | `nil`         | `false`*  |  updated    |
-| `NotModified`      |  –             |  –           | `nil`         | `false`*  |  updated    |
-| `Error`            |  –             |  –           |  updated      | `false`*  |  updated    |
+|                    | `observers`    | `latestData` | `latestError` | `isLoading` | `timestamp` |
+|:-------------------|:--------------:|:------------:|:-------------:|:-----------:|:-----------:|
+| `observerAdded`    |  one added     |  –           |  –            |  –          |  –          |
+| `requested`        |  –             |  –           |  –            | `true`      |  –          |
+| `requestCancelled` |  –             |  –           |  –            | `false`*    |  –          |
+| `newData`          |  –             |  updated     | `nil`         | `false`*    |  updated    |
+| `notModified`      |  –             |  –           | `nil`         | `false`*    |  updated    |
+| `error`            |  –             |  –           |  updated      | `false`*    |  updated    |
 
-<small><strong>*</strong> If calls to load(...) forced multiple simultaneous load requests, the loading property may still be true even after an event that signals the completion of a request.</small>
+<small><strong>*</strong> If calls to `load(...)` forced multiple simultaneous load requests, `isLoading` may still be true even after an event that signals the completion of a request.</small>
 
-See the API docs for [`Resource`](https://bustoutsolutions.github.io/siesta/api/Classes/Resource.html#/Observing%20Resources), [`ResourceEvent`](http://bustoutsolutions.github.io/siesta/api/Enums/ResourceEvent.html), and [`Entity`](http://bustoutsolutions.github.io/siesta/api/Structs/Entity.html) for more information.
+See the API docs for [`Resource`](https://bustoutsolutions.github.io/siesta/api/Classes/Resource.html#/Observing%20Resources), [`ResourceEvent`](https://bustoutsolutions.github.io/siesta/api/Enums/ResourceEvent.html), and [`Entity`](https://bustoutsolutions.github.io/siesta/api/Structs/Entity.html) for more information.

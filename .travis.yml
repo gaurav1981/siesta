@@ -1,6 +1,20 @@
+branches:
+  only:
+  - master
+
 language: objective-c
 os: osx
-osx_image: xcode7
+osx_image: xcode8.2
+env:
+  - scheme='Siesta macOS' platform='OS X'
+  - scheme='Siesta iOS'   platform='iOS Simulator' ios_version='10.1' ios_device='iPhone SE'
+  - scheme='Siesta iOS'   platform='iOS Simulator' ios_version='9.3'  ios_device='iPhone 6'
+  - scheme='Siesta iOS'   platform='iOS Simulator' ios_version='8.1'  ios_device='iPhone 4s'
+
+before_install: |
+  ios_simulator_udid=$(instruments -s devices | grep "$ios_device ($ios_version)" | sed -E 's/.*\[([0-9A-F-]+)\].*/\1/g')
+  echo "Prelaunching iOS simulator with UDID $ios_simulator_udid"
+  open -a "simulator" --args -CurrentDeviceUDID $ios_simulator_udid
 
 script: |
   # ------ Certificates ------
@@ -32,10 +46,8 @@ script: |
 
   set -x
 
-  #gem install xcpretty --no-rdoc --no-ri --no-document --quiet
-  # Fix parsing bug for Swift output:
-  git clone -b patch-1 https://github.com/pcantrell/xcpretty.git /tmp/xcpretty
-  
+  git clone https://github.com/supermarin/xcpretty.git /tmp/xcpretty
+
   #brew update
   #brew install carthage
 
@@ -43,27 +55,34 @@ script: |
 
   # Optional pre-download, because builds are so slow on Travis, and Carthage builds _everything_:
   echo "Downloading prebuilt dependencies"
-  curl https://innig.net/tmp/siesta-deps.tar.bz2 | bzcat | tar xv
+  curl https://innig.net/tmp/siesta-deps-swift3.tar.bz2 | bzcat | tar xv
 
   # Uncomment to build with Carthage instead:
   #echo "Building dependencies"
-  #carthage bootstrap --platform ios --verbose
+  #carthage bootstrap --platform iOS,osx #--verbose
 
   # ------ Project build (at last!) ------
 
-  build() {
-    xcodebuild test -project Siesta.xcodeproj -scheme Siesta -destination 'platform=iOS Simulator,name=iPhone 5s' 2>&1 \
-      | tee /tmp/build.log \
-      | /tmp/xcpretty/bin/xcpretty -c
-    return ${PIPESTATUS[0]}
-  }
-
-  if ! build; then
-    if ! grep 'Connection peer refused channel request' /tmp/build.log; then
-      exit 1
-    fi
-    echo 'WARNING: Encountered https://github.com/travis-ci/travis-ci/issues/4725' &&
-    echo 'Waiting 12 seconds, then retrying...' &&
-    sleep 12
-    build
+  if [[ "$platform" == "iOS Simulator" ]]; then
+    platform="$platform,OS=$ios_version,name=$ios_device"
   fi
+
+  echo
+  echo —————— Running tests for $platform ...
+  echo
+
+  Siesta_DelayAfterEachSpec=1 \
+  Siesta_TestMultipleNetworkProviders=1 \
+  travis_retry xcodebuild test \
+      -project Siesta.xcodeproj \
+      -scheme "$scheme" \
+      -destination "platform=$platform" \
+    | /tmp/xcpretty/bin/xcpretty -c
+  
+  buildresult=${PIPESTATUS[0]}
+
+  echo —————— Completed tests for $platform.
+
+  sleep 5  # Workaround for Travis log truncation
+
+  exit $buildresult

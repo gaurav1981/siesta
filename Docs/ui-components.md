@@ -21,7 +21,7 @@ class ProfileViewController: UIViewController, ResourceObserver {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        statusOverlay.embedIn(self)
+        statusOverlay.embed(in: self)
 
         MyAPI.profile
             .addObserver(self)
@@ -32,12 +32,12 @@ class ProfileViewController: UIViewController, ResourceObserver {
         statusOverlay.positionToCoverParent()
     }
     
-    override func viewWillAppear(animated: Bool) {
+    override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         MyAPI.profile.loadIfNeeded()
     }
 
-    func resourceChanged(resource: Resource, event: ResourceEvent) {
+    func resourceChanged(_ resource: Resource, event: ResourceEvent) {
         let json = JSON(resource.jsonDict)
         nameLabel.text = json["name"].string
         favoriteColorLabel.text = json["favoriteColor"].string
@@ -50,7 +50,7 @@ Or in Objective-C:
 ```objc
 @interface ProfileViewController: UIViewController <BOSResourceObserver>
 @property (weak,nonatomic) IBOutlet UILabel *nameLabel, *favoriteColorLabel;
-@property (strong,nonatomic) BOSResourceStatusOverlay *statusOverlay;
+@property (strong,nonatomic) ResourceStatusOverlay *statusOverlay;
 @end
 
 @implementation ProfileViewController
@@ -58,7 +58,7 @@ Or in Objective-C:
 - (void) viewDidLoad {
     super.viewDidLoad()
 
-    self.statusOverlay = [[[BOSResourceStatusOverlay alloc] init] embedIn:self];
+    self.statusOverlay = [[[ResourceStatusOverlay alloc] init] embedIn:self];
 
     [[MyAPI.instance.profile
         addObserver:self]
@@ -87,4 +87,4 @@ Or in Objective-C:
 
 TODO: document
 
-See [API docs](http://bustoutsolutions.github.io/siesta/api/Classes/RemoteImageView.html)
+See [API docs](https://bustoutsolutions.github.io/siesta/api/Classes/RemoteImageView.html)
