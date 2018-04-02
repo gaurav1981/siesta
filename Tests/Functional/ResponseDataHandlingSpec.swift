@@ -15,7 +15,6 @@ class ResponseDataHandlingSpec: ResourceSpecBase
     {
     override func resourceSpec(_ service: @escaping () -> Service, _ resource: @escaping () -> Resource)
         {
-        @discardableResult
         func stubText(
                 _ string: String? = "zwobble",
                 method: String = "GET",
@@ -75,7 +74,7 @@ class ResponseDataHandlingSpec: ResourceSpecBase
                 {
                 _ = stubRequest(resource, "GET").andReturn(200)
                     .withHeader("Content-Type", "text/plain; charset=utf-8")
-                    .withBody(Data(bytes: UnsafePointer<UInt8>([0xD8] as [UInt8]), count: 1) as NSData)
+                    .withBody(Data(bytes: [0xD8]) as NSData)
                 awaitFailure(resource().load())
 
                 let cause = resource().latestError?.cause as? RequestError.Cause.UndecodableText
@@ -90,8 +89,8 @@ class ResponseDataHandlingSpec: ResourceSpecBase
                 expect(resource().latestError?.cause is RequestError.Cause.WrongInputTypeInTranformerPipeline) == true
                 if let wrongTypeError = resource().latestError?.cause as? RequestError.Cause.WrongInputTypeInTranformerPipeline
                     {
-                    print(wrongTypeError.expectedType == Data.self)
-                    print(wrongTypeError.actualType == String.self)
+                    expect(wrongTypeError.expectedType == Data.self).to(beTrue())
+                    expect(wrongTypeError.actualType == String.self).to(beTrue())
                     }
                 }
 
@@ -99,7 +98,7 @@ class ResponseDataHandlingSpec: ResourceSpecBase
                 {
                 _ = stubRequest(resource, "GET").andReturn(500)
                     .withHeader("Content-Type", "text/plain; charset=UTF-16")
-                    .withBody(Data(bytes: UnsafePointer<UInt8>([0xD8, 0x3D, 0xDC, 0xA3] as [UInt8]), count: 4) as NSData)
+                    .withBody(Data(bytes: [0xD8, 0x3D, 0xDC, 0xA3]) as NSData)
                 awaitFailure(resource().load())
                 expect(resource().latestError?.text) == "💣"
                 }
@@ -138,7 +137,6 @@ class ResponseDataHandlingSpec: ResourceSpecBase
             let jsonStr = "{\"foo\":[\"bar\",42]}"
             let jsonVal = ["foo": ["bar", 42]]
 
-            @discardableResult
             func stubJson(contentType: String = "application/json", expectSuccess: Bool = true)
                 {
                 stubText(jsonStr, contentType: contentType, expectSuccess: expectSuccess)
@@ -167,7 +165,7 @@ class ResponseDataHandlingSpec: ResourceSpecBase
                 expect(resource().latestData).to(beNil())
                 expect(resource().latestError).notTo(beNil())
                 expect(resource().latestError?.userMessage) == "Cannot parse server response"
-                let nsError = resource().latestError?.cause as? NSError
+                let nsError = resource().latestError?.cause as NSError?
                 expect(nsError).notTo(beNil())
                 expect(nsError?.domain) == "NSCocoaErrorDomain"
                 expect(nsError?.code) == 3840
@@ -282,24 +280,60 @@ class ResponseDataHandlingSpec: ResourceSpecBase
                 }
             }
 
-        context("with standard parsing disabled in configuration")
+        describe("standard transformers")
             {
-            beforeEach
-                {
-                service().configure { $0.pipeline.clear() }
-                }
+            let url = "https://pars.ing"
 
-            for contentType in ["text/plain", "application/json"]
+            func checkStandardParsing(for service: Service, json: Bool, text: Bool, images: Bool)
                 {
-                it("does not parse \(contentType)")
+                func stubMalformedResponse(contentType: String, expectSuccess: Bool)
                     {
+                    let resource = service.resource(contentType)
                     _ = stubRequest(resource, "GET").andReturn(200)
                         .withHeader("Content-Type", contentType)
-                        .withBody("]]glarble}{blargble[[" as NSString)
-                    awaitNewData(resource().load())
-
-                    expect(resource().latestData?.content is NSData) == true
+                        .withBody(Data(bytes: [0xD8]) as NSData)
+                    let awaitRequest = expectSuccess ? awaitNewData : awaitFailure
+                    awaitRequest(resource.load(), false)
+                    expect(resource.latestData?.content is Data) == expectSuccess
                     }
+
+                stubMalformedResponse(contentType: "application/json",          expectSuccess: !json)
+                stubMalformedResponse(contentType: "text/plain; charset=utf-8", expectSuccess: !text)
+                stubMalformedResponse(contentType: "image/png",                 expectSuccess: !images)
+                }
+
+            it("include JSON, text, and images by default")
+                {
+                checkStandardParsing(
+                    for: Service(baseURL: url),
+                    json: true, text: true, images: true)
+                }
+
+            it("can be selectively disabled on Service creation")
+                {
+                checkStandardParsing(
+                    for: Service(baseURL: url, standardTransformers: [.text, .image]),
+                    json: false, text: true, images: true)
+                checkStandardParsing(
+                    for: Service(baseURL: url, standardTransformers: [.json]),
+                    json: true, text: false, images: false)
+                checkStandardParsing(
+                    for: Service(baseURL: url, standardTransformers: []),
+                    json: false, text: false, images: false)
+                }
+
+            it("can be cleared and re-added in configuration")
+                {
+                let service = Service(baseURL: url)
+                service.configure
+                    {
+                    $0.pipeline.clear()
+                    $0.pipeline.add(.text)
+                    }
+
+                checkStandardParsing(
+                    for: service,
+                    json: false, text: true, images: false)
                 }
             }
 
@@ -598,7 +632,7 @@ private class TestTransformer: ResponseTransformer
             case .success(var entity):
                 entity.content = (entity.content as? String ?? "<non-string>") + " processed"
                 if let header = entity.headers["x-custom-header"]
-                    { entity.headers["x-custom-header"] = String(header.characters.reversed()) }
+                    { entity.headers["x-custom-header"] = String(header.reversed()) }
                 return .success(entity)
 
             case .failure(var error):

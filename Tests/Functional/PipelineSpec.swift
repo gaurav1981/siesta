@@ -44,7 +44,7 @@ class PipelineSpec: ResourceSpecBase
                 for stage in [.decoding, .parsing, .model, .cleanup] as [PipelineStageKey]
                     {
                     $0.pipeline[stage].add(
-                        appender(stage.description.prefix(3)))
+                        appender(String(stage.description.prefix(3))))
                     }
                 }
             }
@@ -328,7 +328,7 @@ private class TestCache: EntityCache
 
     func readEntity(forKey key: TestCacheKey) -> Entity<Any>?
         {
-        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 0.05)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05)
             { self.receivedCacheRead = true }
 
         return entries[key]
@@ -355,7 +355,7 @@ private struct TestCacheKey
     // associates a cache with the keys it generated.
 
     init(prefix: String, path: String?)
-        { string = "\(prefix)•\(path)" }
+        { string = "\(prefix)•\(path ?? "")" }
     }
 
 extension TestCacheKey: Hashable
@@ -367,14 +367,6 @@ extension TestCacheKey: Hashable
 private func ==(lhs: TestCacheKey, rhs: TestCacheKey) -> Bool
     {
     return lhs.string == rhs.string
-    }
-
-private extension String
-    {
-    func prefix(_ n: Int) -> String
-        {
-        return self[startIndex ..< characters.index(startIndex, offsetBy: n)]
-        }
     }
 
 private class MainThreadCache: EntityCache

@@ -203,14 +203,15 @@ public extension Resource
         if let existingEntry = observers[identity]
             {
             existingEntry.addOwner(owner)
-            observersChanged()
-            return self
+            }
+        else
+            {
+            let newEntry = ObserverEntry(observer: observer, resource: self)
+            newEntry.addOwner(owner)
+            observers[identity] = newEntry
+            observer.resourceChanged(self, event: .observerAdded)
             }
 
-        let newEntry = ObserverEntry(observer: observer, resource: self)
-        newEntry.addOwner(owner)
-        observers[identity] = newEntry
-        observer.resourceChanged(self, event: .observerAdded)
         observersChanged()
         return self
         }
@@ -274,7 +275,7 @@ public extension Resource
             }
         }
 
-    internal func notifyObservers(progress: Double)
+    internal func notifyObservers(ofProgress progress: Double)
         {
         for entry in observers.values
             {
@@ -370,8 +371,8 @@ internal class ObserverEntry: CustomStringConvertible
 
     private func withOwner(
             _ owner: AnyObject,
-            ifObserver selfOwnerAction: (Void) -> Void,
-            else externalOwnerAction: (Void) -> Void)
+            ifObserver selfOwnerAction: () -> Void,
+            else externalOwnerAction: () -> Void)
         {
         // TODO: see if isObject() check improves perf here once https://bugs.swift.org/browse/SR-2867 is fixed
         if owner === (observer as AnyObject?)

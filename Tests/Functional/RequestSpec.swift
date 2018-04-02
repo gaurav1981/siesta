@@ -29,6 +29,17 @@ class RequestSpec: ResourceSpecBase
                 awaitNewData(resource().request(.patch))
                 }
 
+            for (method, httpCode) in [(RequestMethod.head, 200), (RequestMethod.post, 204)]
+                {
+                it("represents response without body as zero-length Data for \(method) → \(httpCode)")
+                    {
+                    _ = stubRequest(resource, "HEAD").andReturn(200)
+                    let req = resource().request(.head)
+                    awaitNewData(req)
+                    req.onSuccess { expect($0.typedContent()) == Data() }
+                    }
+                }
+
             it("sends headers from configuration")
                 {
                 service().configure { $0.headers["Zoogle"] = "frotz" }
@@ -36,6 +47,84 @@ class RequestSpec: ResourceSpecBase
                     .withHeader("Zoogle", "frotz")
                     .andReturn(200)
                 awaitNewData(resource().request(.get))
+                }
+
+            describe("mutators")
+                {
+                it("can alter headers")
+                    {
+                    var malkoviches = ""
+                    service().configure
+                        {
+                        $0.mutateRequests
+                            {
+                            malkoviches += "malkovich"
+                            $0.setValue(malkoviches, forHTTPHeaderField: "X-Malkoviches")
+                            }
+                        }
+
+                    for counter in ["malkovich", "malkovichmalkovich", "malkovichmalkovichmalkovich"]
+                        {
+                        LSNocilla.sharedInstance().clearStubs()
+                        _ = stubRequest(resource, "GET").withHeader("X-Malkoviches", counter).andReturn(200)
+                        awaitNewData(resource().request(.get))
+                        }
+                    }
+
+                it("can read and alter the body")
+                    {
+                    service().configure
+                        {
+                        $0.mutateRequests
+                            {
+                            req in
+                            if var body = req.httpBody
+                                {
+                                body += [42]
+                                req.httpBody = body
+                                req.setValue(String(body.count), forHTTPHeaderField: "Content-Length")
+                                }
+                            }
+                        }
+
+                    _ = stubRequest(resource, "POST")
+                        .withHeader("Content-Length", "4")
+                        .withBody(Data([0, 1, 2, 42]) as NSData)
+                        .andReturn(200)
+                    awaitNewData(resource().request(.post, data: Data([0, 1, 2]), contentType: "foo/bar"))
+                    }
+
+                it("can alter the HTTP method, but this does not change mutators used")
+                    {
+                    service().configure(requestMethods: [.get])
+                        {
+                        $0.mutateRequests
+                            { $0.setValue($0.httpMethod, forHTTPHeaderField: "Original-Method") }
+                        $0.mutateRequests
+                            { $0.httpMethod = "POST" }
+                        $0.mutateRequests
+                            { $0.setValue($0.httpMethod, forHTTPHeaderField: "Mutated-Method") }
+                        }
+
+                    var decorated = 0
+                    service().configure(requestMethods: [.post])
+                        {
+                        $0.mutateRequests
+                            { _ in fail("mutation should use original HTTP method only") }
+                        $0.decorateRequests
+                            {
+                            decorated += 1
+                            return $1
+                            }
+                        }
+
+                    _ = stubRequest(resource, "POST")
+                        .withHeader("Original-Method", "GET")
+                        .withHeader("Mutated-Method", "POST")
+                        .andReturn(200)
+                    awaitNewData(resource().request(.get))
+                    expect(decorated) == 1
+                    }
                 }
 
             describe("decorators")
@@ -140,7 +229,7 @@ class RequestSpec: ResourceSpecBase
                         service().configure
                             {
                             $0.decorateRequests
-                                { _ in dummyReq0() }
+                                { _,_  in dummyReq0() }
                             }
                         awaitFailure(resource().load(), alreadyCompleted: true)  // Nocilla will flag if network call goes through
                         }
@@ -240,7 +329,6 @@ class RequestSpec: ResourceSpecBase
 
         describe("repeated()")
             {
-            @discardableResult
             func stubRepeatedRequest(_ answer: String = "No.", flavorHeader: String? = nil)
                 {
                 LSNocilla.sharedInstance().clearStubs()
@@ -254,13 +342,13 @@ class RequestSpec: ResourceSpecBase
 
             func expectResonseText(_ request: Request, text: String)
                 {
-                let expectation = QuickSpec.current().expectation(description: "response text")
+                let expectation = QuickSpec.current.expectation(description: "response text")
                 request.onSuccess
                     {
                     expectation.fulfill()
                     expect($0.typedContent()) == text
                     }
-                QuickSpec.current().waitForExpectations(timeout: 1, handler: nil)
+                QuickSpec.current.waitForExpectations(timeout: 1)
                 }
 
             let oldRequest = specVar
@@ -363,8 +451,7 @@ class RequestSpec: ResourceSpecBase
             {
             it("handles raw data")
                 {
-                let bytes: [UInt8] = [0x00, 0xFF, 0x17, 0xCA]
-                let nsdata = Data(bytes: UnsafePointer<UInt8>(bytes), count: bytes.count)
+                let nsdata = Data(bytes: [0x00, 0xFF, 0x17, 0xCA])
 
                 _ = stubRequest(resource, "POST")
                     .withHeader("Content-Type", "application/monkey")
@@ -439,7 +526,7 @@ class RequestSpec: ResourceSpecBase
                 it("gives request failure for unencodable strings")
                     {
                     let bogus = String(
-                        bytes: [0xD8, 0x00] as [UInt8],  // Unpaired surrogate char in UTF-16
+                        bytes: [0xD8, 0x00],  // Unpaired surrogate char in UTF-16
                         encoding: String.Encoding.utf16BigEndian)!
 
                     for badParams in [[bogus: "foo"], ["foo": bogus]]
@@ -563,7 +650,7 @@ class RequestSpec: ResourceSpecBase
 
                     req.cancel()
                     _ = reqStub.go()
-                    awaitFailure(req, alreadyCompleted: true)
+                    awaitFailure(req)
                     }
 
                 it("does not stop the chain if the underlying request is cancelled")
@@ -581,6 +668,10 @@ class RequestSpec: ResourceSpecBase
                     _ = reqStub.go()
                     awaitFailure(originalReq, alreadyCompleted: true)
                     expectResult("custom", for: chainedReq, alreadyCompleted: true)
+
+                    // For whatever reason, this spec is especially prone to hitting Nocilla’s
+                    // quirk of making cancelled requests go through anyway
+                    Thread.sleep(forTimeInterval: 0.02)
                     }
                 }
 
