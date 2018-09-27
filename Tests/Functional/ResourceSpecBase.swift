@@ -12,6 +12,23 @@ import Nimble
 import Nocilla
 import Alamofire
 
+private let _fakeNowLock = NSObject()
+private var _fakeNow: Double?
+private var fakeNow: Double?
+    {
+    get {
+        objc_sync_enter(_fakeNowLock)
+        defer { objc_sync_exit(_fakeNowLock) }
+        return _fakeNow
+        }
+    set {
+        objc_sync_enter(_fakeNowLock)
+        defer { objc_sync_exit(_fakeNowLock) }
+        _fakeNow = newValue
+        }
+    }
+
+
 class ResourceSpecBase: SiestaSpec
     {
     func resourceSpec(_ service: @escaping () -> Service, _ resource: @escaping () -> Resource)
@@ -27,18 +44,15 @@ class ResourceSpecBase: SiestaSpec
             return value == "1" || value == "true"
             }
 
-        if envFlag("DelayAfterEachSpec")
-            {
-            // Nocilla’s threading is broken, and Travis exposes a race condition in it.
-            // This delay is a workaround.
-            print("Using awful sleep workaround for Nocilla’s thread safety problems \u{1f4a9}")
-            afterEach { Thread.sleep(forTimeInterval: 0.02) }  // must happen before clearStubs()
-            }
-
         beforeSuite { LSNocilla.sharedInstance().start() }
         afterSuite  { LSNocilla.sharedInstance().stop() }
         afterEach   { LSNocilla.sharedInstance().clearStubs() }
 
+        let realNow = Siesta.now
+        Siesta.now =
+            {
+            return fakeNow ?? realNow()
+            }
         afterEach { fakeNow = nil }
 
         if envFlag("TestMultipleNetworkProviders")
@@ -76,10 +90,66 @@ class ResourceSpecBase: SiestaSpec
 
     private func runSpecsWithService(_ serviceBuilder: @escaping () -> Service)
         {
-        let service  = specVar(serviceBuilder),
-            resource = specVar { service().resource("/a/b") }
+        weak var weakService: Service?
 
-        resourceSpec(service, resource)
+        // Standard service and resource test instances
+        // (These use configurable net provider and embed the spec name in the baseURL.)
+
+        let service = specVar
+            {
+            () -> Service in
+
+            let result = serviceBuilder()
+            weakService = result
+            return result
+            }
+
+        let resource = specVar
+            { service().resource("/a/b") }
+
+        // Make sure that Service is deallocated after each spec (which also catches Resource and Request leaks,
+        // since they ultimately retain their associated service)
+        //
+        // NB: This must come _after_ the specVars above, which use afterEach to clear the service and resource.
+
+        aroundEach
+            {
+            example in
+            autoreleasepool { example() }  // Alamofire relies on autorelease, so each spec needs its own pool for leak checking
+            }
+
+        afterEach
+            {
+            exampleMetadata in
+
+            for attempt in 0...
+                {
+                if weakService == nil
+                    { break }  // yay!
+
+                if attempt > 4
+                    {
+                    fail("Service instance leaked by test")
+                    weakService = nil
+                    break
+                    }
+
+                if attempt > 0  // waiting for one cleanup cycle is normal
+                    {
+                    print("Test may have leaked service instance; will wait for cleanup and check again (attempt \(attempt))")
+                    Thread.sleep(forTimeInterval: 0.02 * pow(3, Double(attempt)))
+                    }
+                awaitObserverCleanup()
+                weakService?.flushUnusedResources()
+                }
+            }
+
+        // Run the actual specs
+
+        context("")  // Make specVars above run in a separate context so their afterEach cleans up _before_ the leak check
+            {
+            resourceSpec(service, resource)
+            }
         }
 
     var baseURL: String
@@ -109,9 +179,9 @@ func stubRequest(_ resource: Resource, _ method: String) -> LSStubRequestDSL
     return stubRequest(method, resource.url.absoluteString as NSString)
     }
 
-func awaitNewData(_ req: Siesta.Request, alreadyCompleted: Bool = false)
+func awaitNewData(_ req: Siesta.Request, initialState: RequestState = .inProgress)
     {
-    expect(req.isCompleted) == alreadyCompleted
+    expect(req.state) == initialState
     let responseExpectation = QuickSpec.current.expectation(description: "awaiting response callback: \(req)")
     let successExpectation = QuickSpec.current.expectation(description: "awaiting success callback: \(req)")
     let newDataExpectation = QuickSpec.current.expectation(description: "awaiting newData callback: \(req)")
@@ -121,12 +191,12 @@ func awaitNewData(_ req: Siesta.Request, alreadyCompleted: Bool = false)
        .onNewData     { _ in newDataExpectation.fulfill() }
        .onNotModified { fail("notModified callback should not be called") }
     QuickSpec.current.waitForExpectations(timeout: 1)
-    expect(req.isCompleted) == true
+    expect(req.state) == .completed
     }
 
 func awaitNotModified(_ req: Siesta.Request)
     {
-    expect(req.isCompleted) == false
+    expect(req.state) == .inProgress
     let responseExpectation = QuickSpec.current.expectation(description: "awaiting response callback: \(req)")
     let successExpectation = QuickSpec.current.expectation(description: "awaiting success callback: \(req)")
     let notModifiedExpectation = QuickSpec.current.expectation(description: "awaiting notModified callback: \(req)")
@@ -136,12 +206,12 @@ func awaitNotModified(_ req: Siesta.Request)
        .onNewData     { _ in fail("newData callback should not be called") }
        .onNotModified { notModifiedExpectation.fulfill() }
     QuickSpec.current.waitForExpectations(timeout: 1)
-    expect(req.isCompleted) == true
+    expect(req.state) == .completed
     }
 
-func awaitFailure(_ req: Siesta.Request, alreadyCompleted: Bool = false)
+func awaitFailure(_ req: Siesta.Request, initialState: RequestState = .inProgress)
     {
-    expect(req.isCompleted) == alreadyCompleted
+    expect(req.state) == initialState
     let responseExpectation = QuickSpec.current.expectation(description: "awaiting response callback: \(req)")
     let errorExpectation = QuickSpec.current.expectation(description: "awaiting failure callback: \(req)")
     req.onCompletion  { _ in responseExpectation.fulfill() }
@@ -151,35 +221,39 @@ func awaitFailure(_ req: Siesta.Request, alreadyCompleted: Bool = false)
        .onNotModified { fail("notModified callback should not be called") }
 
     QuickSpec.current.waitForExpectations(timeout: 1)
-    expect(req.isCompleted) == true
+    expect(req.state) == .completed
 
     // When cancelling a request, Siesta immediately kills its end of the request, then sends a cancellation to the
     // network layer without waiting for a response. This causes spurious spec failures if LSNocilla’s clearStubs() gets
     // called before the network has a chance to finish, so we have to wait for the underlying request as well as Siesta.
 
-    if alreadyCompleted
+    if initialState == .completed
         { awaitUnderlyingNetworkRequest(req) }
     }
 
 func awaitUnderlyingNetworkRequest(_ req: Siesta.Request)
     {
-    if let netReq = req as? NetworkRequest
-        {
-        let networkExpectation = QuickSpec.current.expectation(description: "awaiting underlying network response: \(req)")
-        pollUnderlyingCompletion(netReq, expectation: networkExpectation)
-        QuickSpec.current.waitForExpectations(timeout: 1.0)
-        }
+    let networkExpectation = QuickSpec.current.expectation(description: "awaiting underlying network response: \(req)")
+    pollUnderlyingCompletion(req, expectation: networkExpectation)
+    QuickSpec.current.waitForExpectations(timeout: 1.0)
     }
 
-private func pollUnderlyingCompletion(_ req: NetworkRequest, expectation: XCTestExpectation)
+private func pollUnderlyingCompletion(_ req: Siesta.Request, expectation: XCTestExpectation)
     {
-    if req.underlyingNetworkRequestCompleted
+    if req.state == .completed
         { expectation.fulfill() }
     else
         {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.0001)
             { pollUnderlyingCompletion(req, expectation: expectation) }
         }
+    }
+
+func stubAndAwaitRequest(for resource: Resource, expectSuccess: Bool = true)
+    {
+    _ = stubRequest(resource, "GET").andReturn(200).withBody("🍕" as NSString)
+    let awaitRequest = expectSuccess ? awaitNewData : awaitFailure
+    awaitRequest(resource.load(), .inProgress)
     }
 
 
@@ -195,8 +269,8 @@ func setResourceTime(_ time: TimeInterval)
 //
 // Since there’s no way to directly detect the cleanup, and thus no positive indicator to
 // wait for, we just wait for all tasks currently queued on the main thread to complete.
-
-func awaitObserverCleanup(for resource: Resource?)
+//
+func awaitObserverCleanup(for resource: Resource? = nil)
     {
     let cleanupExpectation = QuickSpec.current.expectation(description: "awaitObserverCleanup")
     DispatchQueue.main.async
@@ -204,3 +278,18 @@ func awaitObserverCleanup(for resource: Resource?)
     QuickSpec.current.waitForExpectations(timeout: 1)
     }
 
+// Request cancellation can cause a race condition in specs:
+//
+// 1. Network request starts chugging
+// 2. Request is cancelled on the Siesta side, but background network machinery already in motion
+// 3. Spec completes, we clear Nocilla stubs
+// 4. Request (which still hasn't received the cancellation) hits Nocilla, causing it to throw
+//    an unstubbed request error
+//
+// Nocilla doesn't provide any way to actually guard against this, or to wait for pending requests
+// to finish, so we solve it with a timeout (pending a better network stubbing lib).
+//
+func awaitCancelledRequests()
+    {
+    Thread.sleep(forTimeInterval: 0.1)
+    }

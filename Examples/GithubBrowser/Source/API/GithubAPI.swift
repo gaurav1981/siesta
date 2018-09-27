@@ -16,21 +16,21 @@ class _GitHubAPI {
     fileprivate init() {
         #if DEBUG
             // Bare-bones logging of which network calls Siesta makes:
-            LogCategory.enabled = [.network]
+            SiestaLog.Category.enabled = [.network]
 
             // For more info about how Siesta decides whether to make a network call,
             // and which state updates it broadcasts to the app:
 
-            //LogCategory.enabled = LogCategory.common
+            //SiestaLog.Category.enabled = .common
 
             // For the gory details of what Siesta’s up to:
 
-            //LogCategory.enabled = LogCategory.all
+            //SiestaLog.Category.enabled = .detailed
 
             // To dump all requests and responses:
             // (Warning: may cause Xcode console overheating)
 
-            //LogCategory.enabled = LogCategory.all
+            //SiestaLog.Category.enabled = .all
         #endif
 
         // –––––– Global configuration ––––––
@@ -80,7 +80,7 @@ class _GitHubAPI {
 
         service.configureTransformer("/search/repositories") {
             try jsonDecoder.decode(SearchResults<Repository>.self, from: $0.content)
-                .items
+                .items  // Transformers can do arbitrary post-processing
         }
 
         service.configureTransformer("/repos/*/*") {
@@ -92,7 +92,7 @@ class _GitHubAPI {
         }
 
         service.configureTransformer("/repos/*/*/languages") {
-            // For the request, GitHub gives a response of the form {"Swift": 421956, "Objective-C": 11000, ...}.
+            // For this request, GitHub gives a response of the form {"Swift": 421956, "Objective-C": 11000, ...}.
             // Instead of using a custom model class for this one, we just model it as a raw dictionary.
             try jsonDecoder.decode([String:Int].self, from: $0.content)
         }

@@ -28,7 +28,7 @@ open class RemoteImageView: UIImageView
 
     /// The default service to cache `RemoteImageView` images.
     @objc
-    open static var defaultImageService: Service = Service()
+    public static var defaultImageService: Service = Service()
 
     /// The service this view should use to request & cache its images.
     @objc
@@ -39,7 +39,11 @@ open class RemoteImageView: UIImageView
     public var imageURL: String?
         {
         get { return imageResource?.url.absoluteString }
-        set { imageResource = imageService.resource(absoluteURL: newValue) }
+        set {
+            imageResource = (newValue == nil)
+                ? nil
+                : imageService.resource(absoluteURL: newValue)
+            }
         }
 
     /// Optional image transform applyed to placeholderImage and downloaded image

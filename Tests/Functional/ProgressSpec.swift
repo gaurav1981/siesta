@@ -28,7 +28,7 @@ class ProgressSpec: ResourceSpecBase
             it("on request error")
                 {
                 let req = resource().request(.post, text: "𐀯𐀁𐀱𐀲", encoding: String.Encoding.ascii)
-                awaitFailure(req, alreadyCompleted: true)
+                awaitFailure(req, initialState: .completed)
                 expect(req.progress) == 1.0
                 }
 
@@ -54,8 +54,10 @@ class ProgressSpec: ResourceSpecBase
                 let req = resource().load()
                 req.cancel()
                 expect(req.progress) == 1.0
+                awaitFailure(req, initialState: .completed)
+
                 _ = reqStub.go()
-                awaitFailure(req, alreadyCompleted: true)
+                awaitCancelledRequests()
                 }
             }
 

@@ -89,8 +89,7 @@ open class ResourceStatusOverlay: UIView, ResourceObserver
             {
             addSubview(containerView)
             containerView.frame = bounds
-            containerView.autoresizingMask = [UIViewAutoresizing.flexibleWidth,
-                                              UIViewAutoresizing.flexibleHeight]
+            containerView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             }
 
         showSuccess()
@@ -248,7 +247,7 @@ open class ResourceStatusOverlay: UIView, ResourceObserver
                         { return showSuccess() }
 
                 case .error:
-                    if let error = observedResources.flatMap({ $0.latestError }).first
+                    if let error = observedResources.compactMap({ $0.latestError }).first
                         { return showError(error) }
                 }
             }
